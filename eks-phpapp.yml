@@ -1,41 +1,39 @@
-pipeline {
-	agent any 
-	environment {
-		IMAGE_PHP="devopsdr/pub:php$BUILD_NUMBER"
-		IMAGE_DB="devopsdr/pub:DB$BUILD_NUMBER"
-		BUILD_IP='ec2-user@3.111.51.68'
-		DEPLOY_IP='ec2-user@13.233.26.115'
-	}
-	stages {
-		stage ('BUILD THE PHPDB IMAGE') {
-			steps {
-				sshagent(['ssh-agent']) {
-					script {
-						withCredentials([usernamePassword(credentialsId: 'dockerhub', passwordVariable: 'dpwd', usernameVariable: 'docr')]) {
-							echo "BUILD THE PHPDB IMAGE"
-							sh "scp -o StrictHostKeyChecking=no -r php_files db_files ${BUILD_IP}:/home/ec2-user/"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'bash ~/php_files/php_script.sh'"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'sudo docker build -t ${IMAGE_PHP} /home/ec2-user/php_files/'"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'sudo docker build -t ${IMAGE_DB} /home/ec2-user/db_files/'"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'sudo docker login -u ${docr} -p ${dpwd}'"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'sudo docker push ${IMAGE_PHP}'"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'sudo docker push ${IMAGE_DB}'"
-						}
-					}
-				}
-			}
-		}
-		stage ('DEPLOY ON KUBERNETES EKSCTL') {
-			steps {
-				script {
-					withCredentials([usernamePassword(credentialsId: 'dockerhub', passwordVariable: 'dpwd', usernameVariable: 'docr')]) {
-						echo "DEPLOY PHP-DB APPLICATION BY EKSCTL"
-						sh "ssh -o StrictHostKeyChecking=no envsubst < eks_phpdb_app.yml | kubectl apply -f -"
-						
-					}
-				}
-			}
-		}
-	}
-}  
-	
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $EKS
+  labels:
+     app: $EKS
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: $EKS
+  template:
+    metadata:
+      labels:
+        app: $EKS
+    spec:
+      imagePullSecrets:
+      - name: dockerhub
+      containers:
+      - name: phpapp-ctr
+        image: $IMAGE_PHP:$BUILD_NUMBER
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: svc1
+  labels:
+      app: $EKS
+spec:
+  selector:
+    app: $EKS
+  ports:
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+  type: LoadBalancer
