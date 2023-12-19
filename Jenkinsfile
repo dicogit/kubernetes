@@ -1,38 +1,85 @@
 pipeline {
-	agent any 
-	environment {
-		IMAGE_PHP="devopsdr/pvt:php_eks$BUILD_NUMBER"
-		BUILD_IP='ec2-user@65.2.81.2'
+    agent any 
+    tools {
+        maven 'slave'
+    }
+    environment {
+        remote1="ec2-user@65.2.81.2"
+        //remote2="ec2-user@13.232.23.141"
+        REPONAME='devopsdr/pvt:eks-addrbook${BUILD_NUMBER}'
 		EKS="eks-phpapp"
-	}
-	stages {
-		stage ('BUILD THE PHPAPP IMAGE') {
-			steps {
-				sshagent(['ssh-agent']) {
-					script {
-						withCredentials([usernamePassword(credentialsId: 'dockerhub', passwordVariable: 'dpwd', usernameVariable: 'docr')]) {
-							echo "BUILD THE PHPDB IMAGE"
-							sh "scp -o StrictHostKeyChecking=no -r php_files ${BUILD_IP}:/home/ec2-user/"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'bash ~/php_files/php_script.sh'"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'sudo docker build -t ${IMAGE_PHP} /home/ec2-user/php_files/'"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'sudo docker login -u ${docr} -p ${dpwd}'"
-							sh "ssh -o StrictHostKeyChecking=no ${BUILD_IP} 'sudo docker push ${IMAGE_PHP}'"
-						}
-					}
-				}
-			}
-		}
-		stage ('DEPLOY ON KUBERNETES EKSCTL') {
-			steps {
-				script {
-					withCredentials([usernamePassword(credentialsId: 'dockerhub', passwordVariable: 'dpwd', usernameVariable: 'docr')]) {
-						echo "DEPLOY PHP-DB APPLICATION BY EKSCTL"
-						sh "ssh -o StrictHostKeyChecking=no envsubst < eks_phpdb_app.yml | kubectl apply -f -"
-						
-					}
-				}
-			}
-		}
-	}
-}  
-	
+    }
+    parameters {
+        string (name:'Env', defaultValue:'Linux', description:'Linux Env')
+        booleanParam(name:'polar', defaultValue:true, description:'conditional')
+        choice(name:'poll', choices:[7,8,9], description:'selection')
+    }
+    stages {
+        stage ('COMPILE') {
+            steps {
+                script {
+                    echo "COMPILE STAGE at ${params.Env}"
+                    sh 'mvn compile'
+                }
+            }
+        }
+        stage ('TEST') {
+            when {
+                expression {
+                    params.polar == true
+                }
+            }
+            steps {
+                script {
+                    echo "TEST STAGE at ${params.Env}"
+                    sh 'mvn test'
+                }
+            }
+            post {
+                always {
+                    junit 'target/surefire-reports/*.xml'
+                }
+            }
+        }
+        stage ('PACKAGE') {
+            steps {
+                sshagent(['ssh-agent']) {
+                    script {
+                        echo "PACKAGE STAGE at ${params.Env}"
+                        withCredentials([usernamePassword(credentialsId: 'dockerhub', passwordVariable: 'dpwd', usernameVariable: 'docr')]) {
+                            sh "scp -o StrictHostKeyChecking=no server_cfg.sh ${remote1}:/home/ec2-user/"
+                            sh "ssh -o StrictHostKeyChecking=no ${remote1} 'bash ~/server_cfg.sh ${REPONAME}'"
+                            sh "ssh -o StrictHostKeyChecking=no ${remote1} 'sudo docker login -u ${docr} -p ${dpwd}'"
+                            sh "ssh -o StrictHostKeyChecking=no ${remote1} 'sudo docker push ${REPONAME}'"
+    
+                        }
+                                    
+                    }
+
+                }
+                
+            }
+        }
+        stage ('DEPLOY') {
+            input {
+                message 'Run Addressbook Application using EKS'
+                ok 'Approved'
+                parameters {
+                    choice(name:'Version', choices:['V1','V2','V3'])
+                }
+            }
+            steps {
+                script {
+                    echo "DEPLOY STAGE at ${params.Env}"
+                    withCredentials([usernamePassword(credentialsId: 'dockerhub', passwordVariable: 'dpwd', usernameVariable: 'docr')]) { 
+                        sh "ssh -o StrictHostKeyChecking=no envsubst < eks-addrbook.yml | kubectl apply -f -"
+                            
+                    }
+                        
+                }
+                
+            }
+        }
+    }
+    
+}

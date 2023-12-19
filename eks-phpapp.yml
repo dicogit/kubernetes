@@ -5,7 +5,7 @@ metadata:
   labels:
      app: $EKS
 spec:
-  replicas: 10
+  replicas: 1
   selector:
     matchLabels:
       app: $EKS
@@ -18,7 +18,7 @@ spec:
       - name: dockerhub
       containers:
       - name: phpapp-ctr
-        image: $IMAGE_PHP:$BUILD_NUMBER
+        image: $REPONAME
         imagePullPolicy: Always
         ports:
         - containerPort: 8080
